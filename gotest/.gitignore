@@ -1,0 +1,34 @@
+# Переменные окружения
+.env
+.env.local
+
+# Бинарные файлы
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Тестовые бинарные файлы
+*.test
+
+# Выходные файлы
+*.out
+
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Логи
+*.log
+
+# База данных (если используете SQLite)
+*.db
+*.sqlite
+*.sqlite3
