@@ -1,87 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"strconv"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"telegram-bot/internal/config"
 )
-
-// handleUpdate обрабатывает одно обновление от Telegram
-func handleUpdate(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
-	// Проверяем, есть ли сообщение
-	if update.Message == nil {
-		return // Если сообщения нет — игнорируем обновление
-	}
-
-	// Получаем сообщение и чат
-	msg := update.Message
-	chatID := msg.Chat.ID
-
-	// Проверяем, является ли сообщение командой
-	if msg.IsCommand() {
-		handleCommand(bot, msg)
-		return
-	}
-
-	if msg.Text == "подписка" {
-		reply := tgbotapi.NewMessage(chatID, "Если вы хотите купить подписку неапишите администратору @MyAppBook")
-		bot.Send(reply)
-	} else {
-		reply := tgbotapi.NewMessage(chatID, "Вы написали: "+msg.Text)
-		bot.Send(reply)
-	}
-
-	// Если это не команда — отвечаем эхом
-	reply := tgbotapi.NewMessage(chatID, "Вы написали: "+msg.Text)
-	bot.Send(reply)
-}
-
-// handleCommand обрабатывает команды бота
-func handleCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
-	chatID := msg.Chat.ID
-	command := msg.Command()
-
-	// Обрабатываем разные команды
-	switch command {
-	case "start":
-		handleStartCommand(bot, chatID)
-	case "help":
-		handleHelpCommand(bot, chatID)
-	default:
-		handleUnknownCommand(bot, chatID)
-	}
-}
-
-// handleStartCommand обрабатывает команду /start
-func handleStartCommand(bot *tgbotapi.BotAPI, chatID int64) {
-	text := "Привет! Я тестовый бот на Go.\n\n" +
-		"Доступные команды:\n" +
-		"/start - начать работу\n" +
-		"/help - помощь"
-
-	msg := tgbotapi.NewMessage(chatID, text)
-	bot.Send(msg)
-}
-
-// handleHelpCommand обрабатывает команду /help
-func handleHelpCommand(bot *tgbotapi.BotAPI, chatID int64) {
-	text := "Это справочная информация.\n\n" +
-		"Бот создан с помощью библиотеки go-telegram-bot-api.\n" +
-		"Исходный код: https://github.com/go-telegram-bot-api/telegram-bot-api"
-
-	msg := tgbotapi.NewMessage(chatID, text)
-	bot.Send(msg)
-}
-
-// handleUnknownCommand обрабатывает неизвестные команды
-func handleUnknownCommand(bot *tgbotapi.BotAPI, chatID int64) {
-	text := "Неизвестная команда. Используйте /help для списка команд."
-
-	msg := tgbotapi.NewMessage(chatID, text)
-	bot.Send(msg)
-}
 
 func main() {
 	// Загружаем конфигурацию
@@ -90,28 +17,166 @@ func main() {
 		log.Fatal("Ошибка загрузки конфигурации:", err)
 	}
 
-	// Создаём экземпляр бота с токеном
+	// Создаём экземпляр бота
 	bot, err := tgbotapi.NewBotAPI(cfg.Bot.Token)
 	if err != nil {
 		log.Fatal("Ошибка создания бота:", err)
 	}
 
-	// Включаем режим отладки (если нужно)
 	bot.Debug = cfg.Bot.Debug
-
-	// Выводим информацию о боте
 	log.Printf("Авторизован как %s", bot.Self.UserName)
 
-	// Создаём канал для получения обновлений
+	// Настраиваем получение обновлений
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = cfg.Bot.Timeout
-
-	// Получаем канал обновлений
 	updates := bot.GetUpdatesChan(u)
 
-	// Обрабатываем каждое обновление
+	// Обрабатываем обновления
 	for update := range updates {
-		// Обрабатываем обновление
-		handleUpdate(bot, update)
+		handleUpdate(bot, update, cfg)
+	}
+}
+
+func handleUpdate(bot *tgbotapi.BotAPI, update tgbotapi.Update, cfg *config.Config) {
+	if update.Message == nil {
+		return
+	}
+
+	msg := update.Message
+	chatID := msg.Chat.ID
+
+	if msg.IsCommand() {
+		handleCommand(bot, msg, cfg)
+		return
+	}
+
+	// Проверяем, является ли сообщение числом
+	if num, err := strconv.ParseFloat(msg.Text, 64); err == nil {
+		square := num * num
+		response := fmt.Sprintf("Квадрат числа %g равен %g", num, square)
+		sendMessage(bot, chatID, response)
+	} else {
+		sendMessage(bot, chatID, "Вы написали: "+msg.Text)
+	}
+}
+
+func handleCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, cfg *config.Config) {
+	command := msg.Command()
+
+	switch command {
+	case "start":
+		handleStartCommand(bot, msg)
+	case "help":
+		handleHelpCommand(bot, msg)
+	case "info":
+		handleInfoCommand(bot, msg)
+	case "settings":
+		handleSettingsCommand(bot, msg, cfg)
+	case "echo":
+		handleEchoCommand(bot, msg)
+	default:
+		handleUnknownCommand(bot, msg)
+	}
+}
+
+func handleStartCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+	text := "Привет! Я тестовый бот на Go.\n\n" +
+		"Доступные команды:\n" +
+		"/start - начать работу\n" +
+		"/help - помощь\n" +
+		"/info - информация о вас\n" +
+		"/settings - настройки бота (только для администраторов)\n" +
+		"/echo <текст> - повторить текст"
+
+	sendMessage(bot, msg.Chat.ID, text)
+}
+
+func handleHelpCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+	text := "Список доступных команд:\n\n" +
+		"/start - начать работу с ботом\n" +
+		"/help - показать это сообщение\n" +
+		"/info - получить информацию о себе\n" +
+		"/settings - настройки бота (только для администраторов)\n" +
+		"/echo <текст> - повторить указанный текст\n\n" +
+		"Текстовые команды:\n" +
+		"подписка - информация о подписке"
+
+	sendMessage(bot, msg.Chat.ID, text)
+}
+
+func handleInfoCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+	user := msg.From
+	chatID := msg.Chat.ID
+
+	info := "Информация о вас:\n\n"
+	info += fmt.Sprintf("ID: %d\n", user.ID)
+	info += fmt.Sprintf("Имя: %s\n", user.FirstName)
+
+	if user.LastName != "" {
+		info += fmt.Sprintf("Фамилия: %s\n", user.LastName)
+	}
+
+	if user.UserName != "" {
+		info += fmt.Sprintf("Username: @%s\n", user.UserName)
+	}
+
+	info += fmt.Sprintf("Язык: %s\n", user.LanguageCode)
+	info += fmt.Sprintf("Бот: %v\n", user.IsBot)
+
+	sendMessage(bot, chatID, info)
+}
+
+func handleSettingsCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, cfg *config.Config) {
+	userID := msg.From.ID
+	chatID := msg.Chat.ID
+
+	// Проверяем, является ли пользователь администратором
+	isAdmin := false
+	for _, adminID := range cfg.Bot.AdminIDs {
+		if adminID == userID {
+			isAdmin = true
+			break
+		}
+	}
+
+	if isAdmin {
+		// Формируем сообщение с настройками
+		text := "Настройки бота:\n"
+		text += fmt.Sprintf("Режим отладки: %v\n", cfg.Bot.Debug)
+		text += fmt.Sprintf("Таймаут: %d секунд", cfg.Bot.Timeout)
+		sendMessage(bot, chatID, text)
+	} else {
+		// Пользователь не администратор
+		text := "Эта команда доступна только администраторам"
+		sendMessage(bot, chatID, text)
+	}
+}
+
+func handleEchoCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+	chatID := msg.Chat.ID
+	// Получаем аргументы команды (все что после /echo)
+	args := msg.CommandArguments()
+	// Проверяем, есть ли аргументы
+	if args == "" {
+		// Аргументов нет - просим указать текст
+		text := "Пожалуйста, укажите текст для повторения. Использование: /echo <текст>"
+		sendMessage(bot, chatID, text)
+	} else {
+		// Аргументы есть - повторяем их
+		sendMessage(bot, chatID, args)
+	}
+}
+
+func handleUnknownCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+	text := "Неизвестная команда. Используйте /help для списка команд."
+	sendMessage(bot, msg.Chat.ID, text)
+}
+
+// sendMessage безопасно отправляет сообщение
+func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	_, err := bot.Send(msg)
+	if err != nil {
+		log.Printf("Ошибка отправки сообщения в чат %d: %v", chatID, err)
 	}
 }
