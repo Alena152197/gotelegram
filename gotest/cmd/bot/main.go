@@ -1,13 +1,14 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"strconv"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"telegram-bot/internal/config"
+	"telegram-bot/internal/handler"
+	"telegram-bot/internal/middleware"
 )
 
 func main() {
@@ -26,6 +27,18 @@ func main() {
 	bot.Debug = cfg.Bot.Debug
 	log.Printf("Авторизован как %s", bot.Self.UserName)
 
+	// Создаём диспетчер обработчиков
+	dispatcher := handler.NewDispatcher()
+
+	// Регистрируем обработчики команд
+	dispatcher.Register(handler.NewStartHandler())
+	dispatcher.Register(handler.NewHelpHandler())
+	dispatcher.Register(handler.NewInfoHandler())
+	dispatcher.Register(handler.NewAdminHandler(cfg.Bot.AdminIDs))
+
+	// Создаём обработчик обычных сообщений
+	messageHandler := handler.NewMessageHandler()
+
 	// Настраиваем получение обновлений
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = cfg.Bot.Timeout
@@ -33,150 +46,73 @@ func main() {
 
 	// Обрабатываем обновления
 	for update := range updates {
-		handleUpdate(bot, update, cfg)
+		handleUpdate(bot, dispatcher, messageHandler, update)
 	}
 }
 
-func handleUpdate(bot *tgbotapi.BotAPI, update tgbotapi.Update, cfg *config.Config) {
+func handleUpdate(
+	bot *tgbotapi.BotAPI,
+	dispatcher *handler.Dispatcher,
+	messageHandler *handler.MessageHandler,
+	update tgbotapi.Update,
+) {
+	// Обрабатываем callback-запросы (нажатия на инлайн-кнопки)
+	if update.CallbackQuery != nil {
+		handleCallbackQuery(bot, update.CallbackQuery)
+		return
+	}
+
+	// Обрабатываем сообщения
 	if update.Message == nil {
 		return
 	}
 
 	msg := update.Message
-	chatID := msg.Chat.ID
 
 	if msg.IsCommand() {
-		handleCommand(bot, msg, cfg)
+		middleware.LogCommand(msg)
+		err := dispatcher.HandleCommand(bot, msg)
+		if err != nil {
+			log.Printf("Ошибка обработки команды: %v", err)
+		}
 		return
 	}
 
-	// Проверяем, является ли сообщение числом
-	if num, err := strconv.ParseFloat(msg.Text, 64); err == nil {
-		square := num * num
-		response := fmt.Sprintf("Квадрат числа %g равен %g", num, square)
-		sendMessage(bot, chatID, response)
-	} else {
-		sendMessage(bot, chatID, "Вы написали: "+msg.Text)
-	}
-}
-
-func handleCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, cfg *config.Config) {
-	command := msg.Command()
-
-	switch command {
-	case "start":
-		handleStartCommand(bot, msg)
-	case "help":
-		handleHelpCommand(bot, msg)
-	case "info":
-		handleInfoCommand(bot, msg)
-	case "settings":
-		handleSettingsCommand(bot, msg, cfg)
-	case "echo":
-		handleEchoCommand(bot, msg)
-	default:
-		handleUnknownCommand(bot, msg)
-	}
-}
-
-func handleStartCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
-	text := "Привет! Я тестовый бот на Go.\n\n" +
-		"Доступные команды:\n" +
-		"/start - начать работу\n" +
-		"/help - помощь\n" +
-		"/info - информация о вас\n" +
-		"/settings - настройки бота (только для администраторов)\n" +
-		"/echo <текст> - повторить текст"
-
-	sendMessage(bot, msg.Chat.ID, text)
-}
-
-func handleHelpCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
-	text := "Список доступных команд:\n\n" +
-		"/start - начать работу с ботом\n" +
-		"/help - показать это сообщение\n" +
-		"/info - получить информацию о себе\n" +
-		"/settings - настройки бота (только для администраторов)\n" +
-		"/echo <текст> - повторить указанный текст\n\n" +
-		"Текстовые команды:\n" +
-		"подписка - информация о подписке"
-
-	sendMessage(bot, msg.Chat.ID, text)
-}
-
-func handleInfoCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
-	user := msg.From
-	chatID := msg.Chat.ID
-
-	info := "Информация о вас:\n\n"
-	info += fmt.Sprintf("ID: %d\n", user.ID)
-	info += fmt.Sprintf("Имя: %s\n", user.FirstName)
-
-	if user.LastName != "" {
-		info += fmt.Sprintf("Фамилия: %s\n", user.LastName)
-	}
-
-	if user.UserName != "" {
-		info += fmt.Sprintf("Username: @%s\n", user.UserName)
-	}
-
-	info += fmt.Sprintf("Язык: %s\n", user.LanguageCode)
-	info += fmt.Sprintf("Бот: %v\n", user.IsBot)
-
-	sendMessage(bot, chatID, info)
-}
-
-func handleSettingsCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, cfg *config.Config) {
-	userID := msg.From.ID
-	chatID := msg.Chat.ID
-
-	// Проверяем, является ли пользователь администратором
-	isAdmin := false
-	for _, adminID := range cfg.Bot.AdminIDs {
-		if adminID == userID {
-			isAdmin = true
-			break
+	if msg.Text != "" {
+		middleware.LogMessage(msg)
+		err := messageHandler.Handle(bot, msg)
+		if err != nil {
+			log.Printf("Ошибка обработки сообщения: %v", err)
 		}
 	}
-
-	if isAdmin {
-		// Формируем сообщение с настройками
-		text := "Настройки бота:\n"
-		text += fmt.Sprintf("Режим отладки: %v\n", cfg.Bot.Debug)
-		text += fmt.Sprintf("Таймаут: %d секунд", cfg.Bot.Timeout)
-		sendMessage(bot, chatID, text)
-	} else {
-		// Пользователь не администратор
-		text := "Эта команда доступна только администраторам"
-		sendMessage(bot, chatID, text)
-	}
 }
 
-func handleEchoCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
-	chatID := msg.Chat.ID
-	// Получаем аргументы команды (все что после /echo)
-	args := msg.CommandArguments()
-	// Проверяем, есть ли аргументы
-	if args == "" {
-		// Аргументов нет - просим указать текст
-		text := "Пожалуйста, укажите текст для повторения. Использование: /echo <текст>"
-		sendMessage(bot, chatID, text)
-	} else {
-		// Аргументы есть - повторяем их
-		sendMessage(bot, chatID, args)
-	}
-}
+// handleCallbackQuery обрабатывает нажатие на инлайн-кнопку
+func handleCallbackQuery(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery) {
+	data := callback.Data
+	chatID := callback.Message.Chat.ID
+	messageID := callback.Message.MessageID
+	userID := callback.From.ID
 
-func handleUnknownCommand(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
-	text := "Неизвестная команда. Используйте /help для списка команд."
-	sendMessage(bot, msg.Chat.ID, text)
-}
+	log.Printf("Callback от пользователя %d: %s", userID, data)
 
-// sendMessage безопасно отправляет сообщение
-func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	_, err := bot.Send(msg)
-	if err != nil {
-		log.Printf("Ошибка отправки сообщения в чат %d: %v", chatID, err)
+	// Отвечаем на callback-запрос (обязательно!)
+	// Это уберёт индикатор загрузки на кнопке
+	callbackConfig := tgbotapi.NewCallback(callback.ID, "")
+	bot.Request(callbackConfig)
+
+	// Обрабатываем данные в зависимости от префикса
+	if strings.HasPrefix(data, "delete_profile_") {
+		if data == "delete_profile_yes" {
+			// Пользователь подтвердил удаление
+			editText := "✅ Профиль удалён!"
+			edit := tgbotapi.NewEditMessageText(chatID, messageID, editText)
+			bot.Send(edit)
+		} else if data == "delete_profile_no" {
+			// Пользователь отменил удаление
+			editText := "❌ Удаление отменено."
+			edit := tgbotapi.NewEditMessageText(chatID, messageID, editText)
+			bot.Send(edit)
+		}
 	}
 }
