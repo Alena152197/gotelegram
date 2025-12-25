@@ -32,13 +32,8 @@ func (h *StartHandler) Handle(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error
 
 	reply := tgbotapi.NewMessage(chatID, text)
 
-	// Прикрепляем клавиатуру к сообщению
-	// reply.ReplyMarkup = keyboard.NewLanguageKeyboard()
-    // сложная клавиатура
-	// reply.ReplyMarkup = keyboard.NewMainMenuKeyboard()
-
-	reply.ReplyMarkup = keyboard.NewConfirmKeyboard("delete_profile")
-	bot.Send(reply)
+	// Показываем reply-клавиатуру с главным меню
+	reply.ReplyMarkup = keyboard.NewMainMenuKeyboard()
 
 	_, err := bot.Send(reply)
 	return err
